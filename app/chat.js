@@ -1,25 +1,56 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { useLocalSearchParams, useNavigation } from 'expo-router';
+import React, { useEffect, useState, useCallback } from "react";
+import { Platform, KeyboardAvoidingView, SafeAreaView } from "react-native";
+import { GiftedChat, Bubble } from "react-native-gifted-chat";
+import { useLocalSearchParams, Stack } from "expo-router";
 
 export default function Chat() {
-  const navigation = useNavigation();
-  const { name, color } = useLocalSearchParams();
+  const { name = "Chat", color = "#C1CCB8" } = useLocalSearchParams();
+  const [messages, setMessages] = useState([]);
 
   useEffect(() => {
-    navigation.setOptions({ title: (name && String(name)) || 'Chat' });
-  }, [name, navigation]);
+    setMessages([
+      {
+        _id: 1,
+        text: "Hello developer 👋",
+        createdAt: new Date(),
+        user: { _id: 2, name: "React Native", avatar: "https://placeimg.com/140/140/any" },
+      },
+      { _id: 2, text: "You entered the chat", createdAt: new Date(), system: true },
+    ]);
+  }, []);
+
+  const onSend = useCallback((newMessages = []) => {
+    setMessages((prev) => GiftedChat.append(prev, newMessages));
+  }, []);
+
+  const renderBubble = (props) => (
+    <Bubble
+      {...props}
+      wrapperStyle={{ right: { backgroundColor: "#111827" }, left: { backgroundColor: "#E5E7EB" } }}
+      textStyle={{ right: { color: "#fff" }, left: { color: "#111827" } }}
+    />
+  );
+
+  // Lift the input above the home indicator
+  const bottomOffset = Platform.OS === "ios" ? 36 : 0;
 
   return (
-    <View style={[s.container, { backgroundColor: color ? String(color) : '#fff' }]}>
-      <Text style={s.h1}>Welcome, {name || 'Guest'} 👋</Text>
-      <Text style={s.sub}>Chat UI comes next.</Text>
-    </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: color }}>
+      <Stack.Screen options={{ title: String(name) }} />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+      >
+        <GiftedChat
+          messages={messages}
+          onSend={(msgs) => onSend(msgs)}
+          user={{ _id: 1, name: String(name) }}
+          renderBubble={renderBubble}
+          bottomOffset={bottomOffset}
+          keyboardShouldPersistTaps="never"
+        />
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
-
-const s = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  h1: { fontSize: 22, fontWeight: '700', marginBottom: 6 },
-  sub: { color: '#666' },
-});

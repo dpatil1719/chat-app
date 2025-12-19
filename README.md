@@ -12,3 +12,8 @@ Expo SDK • React Native • expo-router
 npm install
 npm start
 # then press i for iOS Simulator (or a for Android Emulator)
+
+## Demo
+Short screen recording: start → enter name → pick color → chat.
+
+[Download demo (MP4)](assets/demo.mp4)

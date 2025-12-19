@@ -17,3 +17,7 @@ npm start
 Short screen recording: start → enter name → pick color → chat.
 
 [Download demo (MP4)](assets/demo.mp4)
+
+## Demos
+- 5.1 Start Screen: [download](assets/demo-5-1-start-screen.mp4)
+- 5.2 Chat UI: [download](assets/demo-5-2-chat-ui.mp4)

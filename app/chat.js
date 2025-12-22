@@ -1,54 +1,163 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { Platform, KeyboardAvoidingView, SafeAreaView } from "react-native";
-import { GiftedChat, Bubble } from "react-native-gifted-chat";
-import { useLocalSearchParams, Stack } from "expo-router";
+import React, { useCallback, useLayoutEffect, useState } from "react";
+import { Platform, KeyboardAvoidingView, Text } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { GiftedChat, Bubble, InputToolbar, Composer, Send } from "react-native-gifted-chat";
+import { useLocalSearchParams, useNavigation } from "expo-router";
+import { db } from "../src/firebase";
+import {
+  addDoc,
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+} from "firebase/firestore";
 
 export default function Chat() {
-  const { name = "Chat", color = "#C1CCB8" } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const name   = (params?.name ?? "User").toString();
+  const uid    = (params?.uid  ?? "anon").toString();
+  const bg     = (params?.bg   ?? "#cfdcc6").toString();
+
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+
   const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
 
-  useEffect(() => {
-    setMessages([
-      {
-        _id: 1,
-        text: "Hello developer 👋",
-        createdAt: new Date(),
-        user: { _id: 2, name: "React Native", avatar: "https://placeimg.com/140/140/any" },
-      },
-      { _id: 2, text: "You entered the chat", createdAt: new Date(), system: true },
-    ]);
-  }, []);
+  useLayoutEffect(() => {
+    navigation.setOptions({ title: "chat" });
+    const q = query(collection(db, "messages"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const list = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        list.push({
+          _id: d.id,
+          text: data?.text ?? "",
+          user: data?.user,
+          createdAt:
+            data?.createdAt?.toDate
+              ? data.createdAt.toDate()
+              : data?.createdAt?.toMillis
+              ? new Date(data.createdAt.toMillis())
+              : new Date(),
+        });
+      });
+      setMessages(list);
+    });
+    return () => unsub && unsub();
+  }, [navigation]);
 
-  const onSend = useCallback((newMessages = []) => {
-    setMessages((prev) => GiftedChat.append(prev, newMessages));
-  }, []);
-
-  const renderBubble = (props) => (
-    <Bubble
-      {...props}
-      wrapperStyle={{ right: { backgroundColor: "#111827" }, left: { backgroundColor: "#E5E7EB" } }}
-      textStyle={{ right: { color: "#fff" }, left: { color: "#111827" } }}
-    />
-  );
-
-  // Lift the input above the home indicator
-  const bottomOffset = Platform.OS === "ios" ? 36 : 0;
+  const onSend = useCallback(async (newMessages = []) => {
+    const m = newMessages[0];
+    if (!m?.text?.trim()) return;
+    await addDoc(collection(db, "messages"), {
+      text: m.text,
+      createdAt: serverTimestamp(),
+      user: { _id: uid, name },
+    });
+    setText("");
+  }, [uid, name]);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: color }}>
-      <Stack.Screen options={{ title: String(name) }} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: bg }} edges={["left","right","bottom"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={insets.top}
+        pointerEvents="box-none"
       >
         <GiftedChat
           messages={messages}
-          onSend={(msgs) => onSend(msgs)}
-          user={{ _id: 1, name: String(name) }}
-          renderBubble={renderBubble}
-          bottomOffset={bottomOffset}
-          keyboardShouldPersistTaps="never"
+          onSend={onSend}
+          user={{ _id: uid, name }}
+          alwaysShowSend
+          alignTop
+
+          /* controlled input */
+          text={text}
+          onInputTextChanged={setText}
+          isKeyboardInternallyHandled={false}
+
+          listViewProps={{
+            keyboardShouldPersistTaps: "always",
+            keyboardDismissMode: Platform.OS === "ios" ? "on-drag" : "none",
+          }}
+
+          /* 🔧 Keep input row horizontal & Send at right */
+          renderInputToolbar={(props) => (
+            <InputToolbar
+              {...props}
+              containerStyle={{
+                backgroundColor: "#ffffff",
+                borderTopColor: "#e5e5ea",
+                borderTopWidth: 1,
+              }}
+              primaryStyle={{
+                flexDirection: "row",         // make it a row
+                alignItems: "center",
+                paddingHorizontal: 6,
+              }}
+            />
+          )}
+
+          renderComposer={(props) => (
+            <Composer
+              {...props}
+              placeholder="Type a message..."
+              placeholderTextColor="#7a7a7a"
+              multiline
+              keyboardAppearance={Platform.OS === "ios" ? "light" : "default"}
+              textInputStyle={{ color: "#111", fontSize: 16, flex: 1 }}  // grow to push Send right
+              textInputProps={{
+                editable: true,
+                autoCorrect: true,
+                autoCapitalize: "sentences",
+                allowFontScaling: false,
+              }}
+            />
+          )}
+
+          renderSend={(props) => (
+            <Send
+              {...props}
+              disabled={!props.text?.trim()}
+              containerStyle={{
+                justifyContent: "center",
+                alignItems: "center",
+                marginLeft: 8,
+                marginRight: 8,               // nudge to edge
+              }}
+            >
+              <Text
+                style={{
+                  color: props.text?.trim() ? "#0a84ff" : "#9aa0a6",
+                  fontWeight: "700",
+                  fontSize: 16,
+                }}
+              >
+                Send
+              </Text>
+            </Send>
+          )}
+
+          renderBubble={(props) => (
+            <Bubble
+              {...props}
+              wrapperStyle={{
+                left:  { backgroundColor: "#ffffff" },
+                right: { backgroundColor: "#0a84ff" },
+              }}
+              textStyle={{
+                left:  { color: "#111111" },
+                right: { color: "#ffffff" },
+              }}
+            />
+          )}
+
+          bottomOffset={Platform.OS === "ios" ? 34 : 0}
+          minInputToolbarHeight={56}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>

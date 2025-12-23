@@ -1,8 +1,9 @@
-import React, { useCallback, useLayoutEffect, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Platform, KeyboardAvoidingView, Text } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GiftedChat, Bubble, InputToolbar, Composer, Send } from "react-native-gifted-chat";
 import { useLocalSearchParams, useNavigation } from "expo-router";
+import NetInfo, { useNetInfo } from "@react-native-community/netinfo";
 import { db } from "../src/firebase";
 import {
   addDoc,
@@ -15,15 +16,46 @@ import {
 
 export default function Chat() {
   const params = useLocalSearchParams();
-  const name   = (params?.name ?? "User").toString();
-  const uid    = (params?.uid  ?? "anon").toString();
-  const bg     = (params?.bg   ?? "#cfdcc6").toString();
+  const name = (params?.name ?? "User").toString();
+  const uid  = (params?.uid  ?? "anon").toString();
+  const bg   = (params?.bg   ?? "#cfdcc6").toString();
 
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
+
+  // ---- NetInfo (with simulator-safe recovery) ------------------------------
+  const net = useNetInfo();
+  const [netFix, setNetFix] = useState(null);
+  const hookConnected = net.isConnected;
+  // Treat null as "unknown"; use last polled value; default to true so the
+  // simulator shows the toolbar on first render.
+  const isConnected = hookConnected == null ? (netFix == null ? true : netFix) : hookConnected;
+
+  useEffect(() => {
+    let timer;
+    // When the hook says "offline", poll until we're actually back online.
+    if (hookConnected === false) {
+      setNetFix(false);
+      timer = setInterval(() => {
+        NetInfo.fetch()
+          .then(s => {
+            if (s.isConnected) {
+              setNetFix(true);
+              clearInterval(timer);
+            }
+          })
+          .catch(() => {});
+      }, 1500);
+    } else if (hookConnected === true) {
+      setNetFix(true);
+    }
+    return () => timer && clearInterval(timer);
+  }, [hookConnected]);
+
+  // --------------------------------------------------------------------------
 
   useLayoutEffect(() => {
     navigation.setOptions({ title: "chat" });
@@ -46,7 +78,7 @@ export default function Chat() {
       });
       setMessages(list);
     });
-    return () => unsub && unsub();
+    return unsub;
   }, [navigation]);
 
   const onSend = useCallback(async (newMessages = []) => {
@@ -60,12 +92,15 @@ export default function Chat() {
     setText("");
   }, [uid, name]);
 
+  // Simple header offset so the input doesn’t jump under the notch
+  const headerOffset = insets.top + 44;
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bg }} edges={["left","right","bottom"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={insets.top}
+        keyboardVerticalOffset={headerOffset}
         pointerEvents="box-none"
       >
         <GiftedChat
@@ -75,32 +110,25 @@ export default function Chat() {
           alwaysShowSend
           alignTop
 
-          /* controlled input */
           text={text}
           onInputTextChanged={setText}
-          isKeyboardInternallyHandled={false}
+          placeholder="Type a message..."
 
-          listViewProps={{
-            keyboardShouldPersistTaps: "always",
-            keyboardDismissMode: Platform.OS === "ios" ? "on-drag" : "none",
-          }}
-
-          /* 🔧 Keep input row horizontal & Send at right */
-          renderInputToolbar={(props) => (
-            <InputToolbar
-              {...props}
-              containerStyle={{
-                backgroundColor: "#ffffff",
-                borderTopColor: "#e5e5ea",
-                borderTopWidth: 1,
-              }}
-              primaryStyle={{
-                flexDirection: "row",         // make it a row
-                alignItems: "center",
-                paddingHorizontal: 6,
-              }}
-            />
-          )}
+          renderInputToolbar={(props) =>
+            isConnected ? (
+              <InputToolbar
+                {...props}
+                containerStyle={{
+                  borderTopWidth: 1,
+                  borderTopColor: "#e5e7eb",
+                  paddingHorizontal: 8,
+                  paddingVertical: 6,
+                  backgroundColor: "#fff",
+                }}
+                primaryStyle={{ alignItems: "center" }}
+              />
+            ) : null
+          }
 
           renderComposer={(props) => (
             <Composer
@@ -108,14 +136,13 @@ export default function Chat() {
               placeholder="Type a message..."
               placeholderTextColor="#7a7a7a"
               multiline
-              keyboardAppearance={Platform.OS === "ios" ? "light" : "default"}
-              textInputStyle={{ color: "#111", fontSize: 16, flex: 1 }}  // grow to push Send right
               textInputProps={{
                 editable: true,
                 autoCorrect: true,
                 autoCapitalize: "sentences",
                 allowFontScaling: false,
               }}
+              textInputStyle={{ color: "#111", fontSize: 16, flex: 1 }}
             />
           )}
 
@@ -123,12 +150,7 @@ export default function Chat() {
             <Send
               {...props}
               disabled={!props.text?.trim()}
-              containerStyle={{
-                justifyContent: "center",
-                alignItems: "center",
-                marginLeft: 8,
-                marginRight: 8,               // nudge to edge
-              }}
+              containerStyle={{ justifyContent: "center", alignItems: "center", marginHorizontal: 8 }}
             >
               <Text
                 style={{
@@ -146,7 +168,7 @@ export default function Chat() {
             <Bubble
               {...props}
               wrapperStyle={{
-                left:  { backgroundColor: "#ffffff" },
+                left:  { backgroundColor: "#f2f2f7" },
                 right: { backgroundColor: "#0a84ff" },
               }}
               textStyle={{
@@ -155,6 +177,11 @@ export default function Chat() {
               }}
             />
           )}
+
+          listViewProps={{
+            keyboardShouldPersistTaps: "always",
+            keyboardDismissMode: Platform.OS === "ios" ? "on-drag" : "none",
+          }}
 
           bottomOffset={Platform.OS === "ios" ? 34 : 0}
           minInputToolbarHeight={56}

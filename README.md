@@ -1,23 +1,19 @@
-# Chat App (Expo + Expo Router)
+# Chat-App (Exercise 5.5 – Communication Features)
 
-Two screens:
-- **Start** (`app/index.js`): enter your name, choose a background color, then tap **Start chatting**.
-- **Chat** (`app/chat.js`): receives the name & color, sets the header title to the user's name, and uses the chosen background color.
+A React Native (Expo) chat app that supports:
+- Real-time messages with Firestore  
+- Offline caching with AsyncStorage (reads when offline, hides input bar)  
+- Image sharing (pick from library or camera) via Firebase Storage  
+- Location sharing with an embedded map bubble (react-native-maps)  
+- Connectivity-aware UI  
+- Accessible Custom Actions button
 
-## Tech
-Expo SDK • React Native • expo-router
+## 1) Prereqs
+- Node.js LTS  
+- Expo Go (for quick testing) **or** a Development Build  
+- Xcode (iOS Simulator) and/or Android Studio (Android Emulator)
 
-## Run locally
+## 2) Install & Run
 ```bash
 npm install
-npm start
-# then press i for iOS Simulator (or a for Android Emulator)
-
-## Demo
-Short screen recording: start → enter name → pick color → chat.
-
-[Download demo (MP4)](assets/demo.mp4)
-
-## Demos
-- 5.1 Start Screen: [download](assets/demo-5-1-start-screen.mp4)
-- 5.2 Chat UI: [download](assets/demo-5-2-chat-ui.mp4)
+npx expo start

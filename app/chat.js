@@ -1,10 +1,9 @@
-import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import React, { useCallback, useLayoutEffect, useState } from "react";
 import { Platform, KeyboardAvoidingView, Text } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GiftedChat, Bubble, InputToolbar, Composer, Send } from "react-native-gifted-chat";
 import { useLocalSearchParams, useNavigation } from "expo-router";
-import NetInfo, { useNetInfo } from "@react-native-community/netinfo";
-import { db } from "../src/firebase";
+import { db, storage } from "../src/firebase";
 import {
   addDoc,
   collection,
@@ -13,49 +12,20 @@ import {
   query,
   serverTimestamp,
 } from "firebase/firestore";
+import MapView from "react-native-maps";
+import CustomActions from "./components/CustomActions";
 
 export default function Chat() {
   const params = useLocalSearchParams();
-  const name = (params?.name ?? "User").toString();
-  const uid  = (params?.uid  ?? "anon").toString();
-  const bg   = (params?.bg   ?? "#cfdcc6").toString();
+  const name   = (params?.name ?? "User").toString();
+  const uid    = (params?.uid  ?? "anon").toString();
+  const bg     = (params?.bg   ?? "#cfdcc6").toString();
 
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
-
-  // ---- NetInfo (with simulator-safe recovery) ------------------------------
-  const net = useNetInfo();
-  const [netFix, setNetFix] = useState(null);
-  const hookConnected = net.isConnected;
-  // Treat null as "unknown"; use last polled value; default to true so the
-  // simulator shows the toolbar on first render.
-  const isConnected = hookConnected == null ? (netFix == null ? true : netFix) : hookConnected;
-
-  useEffect(() => {
-    let timer;
-    // When the hook says "offline", poll until we're actually back online.
-    if (hookConnected === false) {
-      setNetFix(false);
-      timer = setInterval(() => {
-        NetInfo.fetch()
-          .then(s => {
-            if (s.isConnected) {
-              setNetFix(true);
-              clearInterval(timer);
-            }
-          })
-          .catch(() => {});
-      }, 1500);
-    } else if (hookConnected === true) {
-      setNetFix(true);
-    }
-    return () => timer && clearInterval(timer);
-  }, [hookConnected]);
-
-  // --------------------------------------------------------------------------
 
   useLayoutEffect(() => {
     navigation.setOptions({ title: "chat" });
@@ -67,6 +37,8 @@ export default function Chat() {
         list.push({
           _id: d.id,
           text: data?.text ?? "",
+          image: data?.image,
+          location: data?.location,
           user: data?.user,
           createdAt:
             data?.createdAt?.toDate
@@ -92,15 +64,25 @@ export default function Chat() {
     setText("");
   }, [uid, name]);
 
-  // Simple header offset so the input doesn’t jump under the notch
-  const headerOffset = insets.top + 44;
+  // ✅ Helper used by CustomActions to send images/locations as messages
+  const sendAttachment = async (payload) => {
+    try {
+      await addDoc(collection(db, "messages"), {
+        ...payload,                       // { image: url } or { location: {lat, long} }
+        createdAt: serverTimestamp(),
+        user: { _id: uid, name },
+      });
+    } catch (e) {
+      console.log("sendAttachment error", e);
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bg }} edges={["left","right","bottom"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={headerOffset}
+        keyboardVerticalOffset={insets.top}
         pointerEvents="box-none"
       >
         <GiftedChat
@@ -110,31 +92,56 @@ export default function Chat() {
           alwaysShowSend
           alignTop
 
+          /* controlled input */
           text={text}
           onInputTextChanged={setText}
           placeholder="Type a message..."
 
-          renderInputToolbar={(props) =>
-            isConnected ? (
-              <InputToolbar
-                {...props}
-                containerStyle={{
-                  borderTopWidth: 1,
-                  borderTopColor: "#e5e7eb",
-                  paddingHorizontal: 8,
-                  paddingVertical: 6,
-                  backgroundColor: "#fff",
+          /* 🔘 Action (+) button for image/location */
+          renderActions={(p) => (
+            <CustomActions
+              {...p}
+              storage={storage}
+              uid={uid}
+              onSend={sendAttachment}
+            />
+          )}
+
+          /* 🗺️ Show a small map when a message has location */
+          renderCustomView={({ currentMessage }) =>
+            currentMessage?.location ? (
+              <MapView
+                style={{ width: 150, height: 100, borderRadius: 12, margin: 4 }}
+                region={{
+                  latitude: currentMessage.location.latitude,
+                  longitude: currentMessage.location.longitude,
+                  latitudeDelta: 0.0922,
+                  longitudeDelta: 0.0421,
                 }}
-                primaryStyle={{ alignItems: "center" }}
               />
             ) : null
           }
+
+          renderInputToolbar={(props) => (
+            <InputToolbar
+              {...props}
+              containerStyle={{
+                borderTopWidth: 1,
+                borderTopColor: "#e5e7eb",
+                paddingHorizontal: 8,
+                paddingVertical: 6,
+                backgroundColor: "#fff",
+              }}
+              primaryStyle={{ alignItems: "center" }}
+            />
+          )}
 
           renderComposer={(props) => (
             <Composer
               {...props}
               placeholder="Type a message..."
               placeholderTextColor="#7a7a7a"
+              textInputAutoFocus={false}
               multiline
               textInputProps={{
                 editable: true,
@@ -150,7 +157,12 @@ export default function Chat() {
             <Send
               {...props}
               disabled={!props.text?.trim()}
-              containerStyle={{ justifyContent: "center", alignItems: "center", marginHorizontal: 8 }}
+              containerStyle={{
+                justifyContent: "center",
+                alignItems: "center",
+                marginLeft: 8,
+                marginRight: 8,
+              }}
             >
               <Text
                 style={{
@@ -177,11 +189,6 @@ export default function Chat() {
               }}
             />
           )}
-
-          listViewProps={{
-            keyboardShouldPersistTaps: "always",
-            keyboardDismissMode: Platform.OS === "ios" ? "on-drag" : "none",
-          }}
 
           bottomOffset={Platform.OS === "ios" ? 34 : 0}
           minInputToolbarHeight={56}

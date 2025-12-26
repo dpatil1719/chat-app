@@ -13,6 +13,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import MapView from "react-native-maps";
+import AudioBubble from "./components/AudioBubble";
 import CustomActions from "./components/CustomActions";
 
 export default function Chat() {

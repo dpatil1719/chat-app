@@ -1,42 +1,40 @@
-import React from "react";
-import { Alert, TouchableOpacity, View, Text, Linking } from "react-native";
+import React, { useRef } from "react";
+import { Alert, TouchableOpacity, Text, View, StyleSheet, Platform, Linking } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useActionSheet } from "@expo/react-native-action-sheet";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { Audio } from "expo-av";
 
 /**
- * Props expected from Chat.js:
+ * Props expected:
  * - storage: Firebase Storage instance
- * - uid: current user's id
- * - onSend: function(payload) that writes message to Firestore
- * - wrapperStyle, iconTextStyle: (optional) GiftedChat styling passthroughs
+ * - uid: current user id
+ * - onSend: helper from Chat.js that adds a message to Firestore
+ * - wrapperStyle, iconTextStyle: GiftedChat styles passthrough
  */
-const CustomActions = ({ storage, uid, onSend, wrapperStyle, iconTextStyle }) => {
-  const actionSheet = useActionSheet();
+export default function CustomActions({ storage, uid, onSend, wrapperStyle, iconTextStyle }) {
+  const { showActionSheetWithOptions } = useActionSheet();
+  const recordingRef = useRef(null);
 
-  const generateReference = (uri, userId) => {
+  const generateReference = (uri, prefix = "image") => {
     const ts = Date.now();
-    const parts = (uri || "").split("/");
-    const name = parts[parts.length - 1] || "image.jpg";
-    return `${userId || "user"}_${ts}_${name}`;
+    const name = uri?.split("/").pop() || `${prefix}.bin`;
+    return `${prefix}-${uid}-${ts}-${name}`;
   };
 
-  const uploadAndSendImage = async (imageURI) => {
+  const uploadAndSendImage = async (uri) => {
     try {
-      const res = await fetch(imageURI);
-      const blob = await res.blob();
-
-      const objectPath = generateReference(imageURI, uid);
-      const objectRef = ref(storage, objectPath);
-
-      await uploadBytes(objectRef, blob);
-      const url = await getDownloadURL(objectRef);
-
-      onSend({ image: url });
+      const r = await fetch(uri);
+      const blob = await r.blob();
+      const unique = generateReference(uri, "image");
+      const uploadRef = ref(storage, unique);
+      await uploadBytes(uploadRef, blob);
+      const url = await getDownloadURL(uploadRef);
+      onSend({ image: url }); // images already render in GiftedChat
     } catch (e) {
       console.log("upload image error", e);
-      Alert.alert("Upload failed", "Could not upload the image. Please try again.");
+      Alert.alert("Upload failed", "Could not upload the image.");
     }
   };
 
@@ -44,28 +42,20 @@ const CustomActions = ({ storage, uid, onSend, wrapperStyle, iconTextStyle }) =>
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm?.granted) {
-        Alert.alert(
-          "Permission required",
-          "Please allow Photos access to pick an image.",
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Open Settings", onPress: () => (Linking.openSettings ? Linking.openSettings() : null) },
-          ]
-        );
-        return;
+        return Alert.alert("Permission required", "Please allow photo library access.");
       }
-
+      // No mediaTypes passed: default is images (also avoids deprecation warnings)
       const result = await ImagePicker.launchImageLibraryAsync({
-        quality: 0.9,
-        allowsEditing: false,
+        quality: 0.8,
+        selectionLimit: 1,
+        allowsMultipleSelection: false,
       });
-
       if (!result.canceled) {
         await uploadAndSendImage(result.assets[0].uri);
       }
     } catch (e) {
       console.log("pickImage error", e);
-      Alert.alert("Image picker error", "Unable to open photo library.");
+      Alert.alert("Cannot open library", "Please try again.");
     }
   };
 
@@ -73,21 +63,14 @@ const CustomActions = ({ storage, uid, onSend, wrapperStyle, iconTextStyle }) =>
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm?.granted) {
-        Alert.alert("Permission required", "Please allow camera access to take a photo.");
-        return;
+        return Alert.alert("Permission required", "Please allow camera access to take a photo.");
       }
-
       const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
-      if (!result.canceled) {
-        await uploadAndSendImage(result.assets[0].uri);
-      }
+      if (!result.canceled) await uploadAndSendImage(result.assets[0].uri);
     } catch (e) {
-      const msg = String(e?.message || e).toLowerCase();
-      if (msg.includes("simulator") || msg.includes("not available")) {
-        Alert.alert(
-          "Camera not available",
-          "The iOS simulator doesn’t have a camera. Please test on a physical device."
-        );
+      const msg = String(e?.message || e);
+      if (msg.toLowerCase().includes("simulator")) {
+        Alert.alert("Camera not available", "The iOS simulator doesn’t have a camera. Please test on a physical device.");
       } else {
         console.log("takePhoto error", e);
         Alert.alert("Camera error", "Unable to use the camera.");
@@ -95,74 +78,101 @@ const CustomActions = ({ storage, uid, onSend, wrapperStyle, iconTextStyle }) =>
     }
   };
 
-  // 🔒 Improved, reliable permission + location flow
-  const ensureLocationPermission = async () => {
-    // If location services are globally off, nudge the user
-    const services = await Location.hasServicesEnabledAsync();
-    if (!services) {
-      Alert.alert(
-        "Turn On Location Services",
-        "Location Services are disabled. Enable them in Settings to share your location.",
-        [{ text: "Open Settings", onPress: () => (Linking.openSettings ? Linking.openSettings() : null) }, { text: "OK" }]
-      );
-      return false;
-    }
-
-    // Check existing permission first
-    const current = await Location.getForegroundPermissionsAsync();
-    if (current?.granted) return true;
-
-    // Ask for permission
-    const req = await Location.requestForegroundPermissionsAsync();
-    if (req?.granted) return true;
-
-    // Still not granted
-    Alert.alert(
-      "Permission required",
-      "We need your permission to share your current location.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open Settings", onPress: () => (Linking.openSettings ? Linking.openSettings() : null) },
-      ]
-    );
-    return false;
-  };
-
   const getLocation = async () => {
     try {
-      const ok = await ensureLocationPermission();
-      if (!ok) return;
-
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced, // fast + good enough
-      });
-
-      onSend({
-        location: {
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        },
-      });
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (!perm?.granted) {
+        return Alert.alert(
+          "Permission required",
+          "We need your permission to share your current location.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => (Linking?.openSettings ? Linking.openSettings() : null) },
+          ]
+        );
+      }
+      const loc = await Location.getCurrentPositionAsync({});
+      onSend({ location: { latitude: loc.coords.latitude, longitude: loc.coords.longitude } });
     } catch (e) {
       console.log("getLocation error", e);
       Alert.alert("Location error", "Unable to get your current location.");
     }
   };
 
+  // --- Audio recording (Bonus) ---
+  const startRecording = async () => {
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm?.granted) {
+        return Alert.alert("Permission required", "Please allow microphone access to record audio.");
+      }
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        interruptionModeIOS: 1, // default
+      });
+
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await rec.startAsync();
+      recordingRef.current = rec;
+      Alert.alert("Recording", "Recording started.\nOpen the + menu again and tap 'Stop Recording' to send.");
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (Platform.OS === "ios" && msg.toLowerCase().includes("simulator")) {
+        Alert.alert("Microphone", "Recording may not work reliably in the simulator. Please test on a physical device.");
+      } else {
+        console.log("startRecording error", e);
+        Alert.alert("Recording error", "Could not start recording.");
+      }
+    }
+  };
+
+  const stopRecordingAndSend = async () => {
+    try {
+      const rec = recordingRef.current;
+      if (!rec) return;
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      recordingRef.current = null;
+
+      // Upload audio (m4a)
+      const r = await fetch(uri);
+      const blob = await r.blob();
+      const key = generateReference(uri || "audio.m4a", "audio");
+      const uploadRef = ref(storage, key);
+      await uploadBytes(uploadRef, blob, { contentType: "audio/m4a" });
+      const url = await getDownloadURL(uploadRef);
+
+      // Send with a small text so it's visible even without a custom player
+      onSend({ audio: url, text: "🎙️ Voice message" });
+    } catch (e) {
+      console.log("stopRecordingAndSend error", e);
+      Alert.alert("Audio upload failed", "Could not upload the audio message.");
+    }
+  };
+
   const onActionPress = () => {
-    const options = ["Choose From Library", "Take Picture", "Send Location", "Cancel"];
+    const hasRecording = !!recordingRef.current;
+    const options = [
+      "Choose From Library",
+      "Take Photo",
+      "Share Location",
+      hasRecording ? "Stop Recording" : "Record Audio",
+      "Cancel",
+    ];
     const cancelButtonIndex = options.length - 1;
 
-    actionSheet.showActionSheetWithOptions(
+    showActionSheetWithOptions(
       { options, cancelButtonIndex },
       async (buttonIndex) => {
         switch (buttonIndex) {
-          case 0:
-            return pickImage();
-          case 1:
-            return takePhoto();
-          case 2:
-            return getLocation();
+          case 0: return pickImage();
+          case 1: return takePhoto();
+          case 2: return getLocation();
+          case 3:
+            if (recordingRef.current) return stopRecordingAndSend();
+            else return startRecording();
           default:
             return;
         }
@@ -172,21 +182,20 @@ const CustomActions = ({ storage, uid, onSend, wrapperStyle, iconTextStyle }) =>
 
   return (
     <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel="Open actions menu"
+      accessibilityHint="Choose to send a photo, take a photo, share location, or record audio"
       style={styles.container}
       onPress={onActionPress}
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Open actions"
-      accessibilityHint="Opens options to pick image, take photo, or share location"
     >
       <View style={[styles.wrapper, wrapperStyle]}>
         <Text style={[styles.iconText, iconTextStyle]}>＋</Text>
       </View>
     </TouchableOpacity>
   );
-};
+}
 
-const styles = {
+const styles = StyleSheet.create({
   container: {
     width: 26,
     height: 26,
@@ -207,8 +216,6 @@ const styles = {
     fontSize: 14,
     backgroundColor: "transparent",
     textAlign: "center",
-    lineHeight: 20,
+    includeFontPadding: false,
   },
-};
-
-export default CustomActions;
+});
